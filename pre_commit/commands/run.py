@@ -11,7 +11,6 @@ from typing import Any
 from typing import Collection
 from typing import Dict
 from typing import List
-from typing import Optional
 from typing import Sequence
 from typing import Set
 from typing import Tuple
@@ -135,10 +134,10 @@ def _run_single_hook(
         hook: Hook,
         skips: Set[str],
         cols: int,
-        diff_before: Optional[Tuple[int, bytes, Optional[bytes]]],
+        diff_before: bytes,
         verbose: bool,
         use_color: bool,
-) -> Tuple[bool, Optional[Tuple[int, bytes, Optional[bytes]]]]:
+) -> Tuple[bool, bytes]:
     filenames = classifier.filenames_for_hook(hook)
 
     if hook.id in skips or hook.alias in skips:
@@ -176,16 +175,13 @@ def _run_single_hook(
         # print hook and dots first in case the hook takes a while to run
         output.write(_start_msg(start=hook.name, end_len=6, cols=cols))
 
-        diff_cmd = ('git', 'diff', '--no-ext-diff', '--exit-code')
-        if diff_before is None:
-            diff_before = cmd_output_b(*diff_cmd, retcode=None)
         if not hook.pass_filenames:
             filenames = ()
         time_before = time.time()
         language = languages[hook.language]
         retcode, out = language.run_hook(hook, filenames, use_color)
         duration = round(time.time() - time_before, 2) or 0
-        ret_diff = cmd_output_b(*diff_cmd, retcode=None)
+        ret_diff = _get_diff()
 
         # if the hook makes changes, fail the commit
         files_modified = diff_before != ret_diff
@@ -253,13 +249,10 @@ def _all_filenames(args: argparse.Namespace) -> Collection[str]:
         return git.get_staged_files()
 
 
-def _has_diff(
-        diff: Optional[Tuple[int, bytes, Optional[bytes]]],
-) -> bool:
-    if diff is not None:
-        return diff[0] == 1
-    else:
-        return git.has_diff()
+def _get_diff() -> bytes:
+    diff_cmd = ('git', 'diff', '--no-ext-diff')
+    _, diff_bytes, _ = cmd_output_b(*diff_cmd, retcode=None)
+    return diff_bytes
 
 
 def _run_hooks(
@@ -275,7 +268,7 @@ def _run_hooks(
         _all_filenames(args), config['files'], config['exclude'],
     )
     retval = 0
-    prior_diff: Optional[Tuple[int, bytes, Optional[bytes]]] = None
+    prior_diff = _get_diff()
     for hook in hooks:
         current_retval, current_diff = _run_single_hook(
             classifier, hook, skips, cols, prior_diff,
@@ -285,7 +278,7 @@ def _run_hooks(
         prior_diff = current_diff
         if retval and config['fail_fast']:
             break
-    if retval and args.show_diff_on_failure and _has_diff(prior_diff):
+    if retval and args.show_diff_on_failure and prior_diff:
         if args.all_files:
             output.write_line(
                 'pre-commit hook(s) made changes.\n'
